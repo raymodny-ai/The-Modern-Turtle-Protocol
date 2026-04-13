@@ -1,0 +1,82 @@
+# ============================================
+# 现代海龟协议量化交易系统 - Docker Compose编排
+# ============================================
+
+version: '3.8'
+
+services:
+  # PostgreSQL数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: turtle_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: turtle_trading
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - turtle_network
+
+  # FastAPI后端服务
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: turtle_backend
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/turtle_trading
+      DEBUG: "False"
+      # SMTP配置
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # Alpha Vantage API Key
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - turtle_network
+    restart: unless-stopped
+
+  # Next.js前端服务
+  frontend:
+    image: node:18-alpine
+    container_name: turtle_frontend
+    working_dir: /app
+    command: >
+      sh -c "npm install && npm run dev"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_PREFIX: /api/v1
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+    depends_on:
+      - backend
+    networks:
+      - turtle_network
+    restart: unless-stopped
+
+networks:
+  turtle_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
