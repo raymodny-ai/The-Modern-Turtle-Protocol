@@ -168,14 +168,22 @@ class TurtleStrategy:
             'low_10_day': latest['Low_10'] if not pd.isna(latest['Low_10']) else None
         }
     
-    def get_volatility_data(self, data: pd.DataFrame) -> dict:
+    def get_volatility_data(self, data: pd.DataFrame, dollar_per_point: float = 1.0) -> dict:
         """获取波动率数据"""
         latest = data.iloc[-1]
         prev_n = data['N'].iloc[-2] if len(data) > 1 else latest['N']
         
+        # N值
+        n_value = latest['N'] if not pd.isna(latest['N']) else None
+        
+        # 美元波动率 = N值 × 每点美元价值 × 合约乘数
+        # 符合PRD第4.2章要求：dollar_volatility = N × dollar_per_point
+        dollar_volatility = n_value * dollar_per_point if n_value else None
+        
         return {
-            'n_value': latest['N'] if not pd.isna(latest['N']) else None,
-            'dollar_volatility': latest['N'] if not pd.isna(latest['N']) else None,
+            'n_value': n_value,
+            'dollar_volatility': dollar_volatility,
+            'dollar_per_point': dollar_per_point,
             'true_range_current': latest['TR'] if not pd.isna(latest['TR']) else None,
             'n_change': ((latest['N'] - prev_n) / prev_n * 100) if not pd.isna(prev_n) and prev_n > 0 else 0,
             'volatility_percentile': self._calculate_volatility_percentile(data)
@@ -226,7 +234,7 @@ class TurtleStrategyAnalyzer:
         signal, reason, details = self.strategy.generate_signal(data)
         
         # 3. 计算波动率参数
-        volatility = self.strategy.get_volatility_data(data)
+        volatility = self.strategy.get_volatility_data(data, dollar_per_point)
         n_value = volatility['n_value'] or 0
         
         # 4. 计算头寸规模

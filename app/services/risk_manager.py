@@ -140,7 +140,11 @@ class PortfolioRiskManager:
         correlations: List[MarketCorrelation],
         positions: List[PositionSnapshot]
     ) -> RiskCheckResult:
-        """检查关联市场限制"""
+        """检查关联市场限制
+        
+        修正：需将目标ticker自身的持仓也计入关联市场的总敞口
+        符合PRD第4.3章"累加暴露阀值引擎"的要求
+        """
         if not correlations:
             # 无相关性数据，使用弱关联限制
             limit = self.LOW_CORRELATION_LIMIT
@@ -155,22 +159,25 @@ class PortfolioRiskManager:
             else:
                 limit = self.LOW_CORRELATION_LIMIT
         
-        # 计算关联市场的总持仓
+        # 获取关联的ticker集合
         correlated_tickers = set()
         for c in correlations:
             correlated_tickers.add(c.ticker_a)
             correlated_tickers.add(c.ticker_b)
+        # 移除目标ticker自身
         correlated_tickers.discard(ticker)
         
-        correlated_units = sum(
-            p.units for p in positions 
-            if p.ticker in correlated_tickers
-        )
+        # 计算关联市场的总持仓（包含目标ticker自身持仓 + 其他关联资产持仓）
+        # 这是与PRD第4.3章"累加暴露阀值"精神相符的完整计算
+        correlated_units = 0
+        for p in positions:
+            if p.ticker == ticker or p.ticker in correlated_tickers:
+                correlated_units += p.units
         
         if correlated_units >= limit:
             return RiskCheckResult(
                 passed=False,
-                blocked_reason=f"关联市场限制: 关联资产已持有 {correlated_units} 单位，达到上限 {limit}",
+                blocked_reason=f"关联市场限制: {ticker}及其关联资产已持有 {correlated_units} 单位，达到上限 {limit}",
                 max_additional_units=0,
                 current_exposure=correlated_units,
                 limit_type="CORRELATED_MARKETS"

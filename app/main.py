@@ -3,13 +3,20 @@
 FastAPI主应用入口
 """
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import uvicorn
 
 from app.core.config import settings
+from app.core.security import (
+    get_current_user,
+    RBACChecker,
+    audit_logger,
+    create_test_token,
+    User
+)
 from app.database.session import init_db
 from app.api import analyze, history, positions
 
@@ -107,6 +114,84 @@ async def root():
         "message": "欢迎使用现代海龟协议量化交易系统",
         "docs": "/docs",
         "version": settings.APP_VERSION
+    }
+
+
+# ============================================
+# 认证相关端点 (PRD第5.3章AuthTuna安全网关)
+# ============================================
+
+@app.post("/auth/login", tags=["认证"])
+async def login(username: str, password: str):
+    """
+    用户登录
+    
+    返回JWT访问令牌
+    """
+    # 简化验证（实际应查数据库）
+    from app.core.security import user_db
+    
+    for user_id, user in user_db.users.items():
+        if user.username == username:
+            if user_db.verify_password(user_id, password):
+                token = user_db.create_access_token(user_id, settings.SECRET_KEY)
+                return {
+                    "access_token": token,
+                    "token_type": "bearer",
+                    "role": user.role.value
+                }
+    
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="用户名或密码错误"
+    )
+
+
+@app.get("/auth/me", tags=["认证"])
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    """获取当前用户信息"""
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "role": current_user.role.value,
+        "permissions": RBACChecker.get_role_permissions(current_user.role)
+    }
+
+
+@app.get("/auth/test-token", tags=["认证"])
+async def get_test_token(user_id: int = 1):
+    """
+    获取测试Token（仅开发环境使用）
+    
+    符合PRD第5.3章AuthTuna安全框架集成
+    """
+    if not settings.DEBUG:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅在开发环境下可用"
+        )
+    
+    token = create_test_token(user_id)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "note": "仅用于开发测试"
+    }
+
+
+@app.get("/audit/logs", tags=["审计"])
+async def get_audit_logs(
+    limit: int = 100,
+    current_user: User = Depends(RBACChecker.require_permissions(["users:read"]))
+):
+    """
+    获取安全审计日志
+    
+    仅管理员可访问
+    """
+    return {
+        "logs": audit_logger.get_recent_logs(limit)
     }
 
 
