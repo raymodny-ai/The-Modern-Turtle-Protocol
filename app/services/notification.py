@@ -47,54 +47,91 @@ class NotificationService:
         发送信号通知
         
         只对BUY/SELL信号发送通知，HOLD信号自动屏蔽
+        修复: 为每种通知渠道分别创建独立的审计日志
         """
         # HOLD信号不发送通知
         if signal == SignalType.HOLD:
             return True
         
-        # 记录通知日志
-        notification_log = NotificationLog(
-            analysis_id=analysis_id,
-            notification_type="EMAIL",
-            signal=DBSignalType(signal.value),
-            message=self._build_message(ticker, signal, signal_reason, current_price, n_value, recommended_units, position_size)
+        # 构建通用消息
+        message = self._build_message(
+            ticker, signal, signal_reason, 
+            current_price, n_value, 
+            recommended_units, position_size
         )
         
+        # 记录每种通知渠道的发送结果
+        notification_logs = []
+        email_success = False
+        webhook_success = False
+        
         try:
-            # 发送邮件
+            # 1. 发送邮件通知
             if settings.SMTP_HOST and settings.SMTP_TO:
-                await self._send_email(
-                    ticker=ticker,
-                    signal=signal,
-                    current_price=current_price,
-                    n_value=n_value,
-                    recommended_units=recommended_units,
-                    position_size=position_size,
-                    signal_reason=signal_reason
+                email_log = NotificationLog(
+                    analysis_id=analysis_id,
+                    notification_type="EMAIL",
+                    signal=DBSignalType(signal.value),
+                    message=message
                 )
-                notification_log.status = "SENT"
-                notification_log.sent_at = datetime.now()
+                try:
+                    await self._send_email(
+                        ticker=ticker,
+                        signal=signal,
+                        current_price=current_price,
+                        n_value=n_value,
+                        recommended_units=recommended_units,
+                        position_size=position_size,
+                        signal_reason=signal_reason
+                    )
+                    email_log.status = "SENT"
+                    email_log.sent_at = datetime.now()
+                    email_success = True
+                except Exception as e:
+                    email_log.status = "FAILED"
+                    email_log.error_message = str(e)
+                    print(f"[NOTIFICATION] Email发送失败: {e}")
+                notification_logs.append(email_log)
             
-            # 发送Webhook
+            # 2. 发送Webhook通知
             if settings.WEBHOOK_URL:
-                await self._send_webhook(
-                    ticker=ticker,
-                    signal=signal,
-                    current_price=current_price,
-                    n_value=n_value,
-                    recommended_units=recommended_units,
-                    position_size=position_size
+                webhook_log = NotificationLog(
+                    analysis_id=analysis_id,
+                    notification_type="WEBHOOK",
+                    signal=DBSignalType(signal.value),
+                    message=message
                 )
+                try:
+                    await self._send_webhook(
+                        ticker=ticker,
+                        signal=signal,
+                        current_price=current_price,
+                        n_value=n_value,
+                        recommended_units=recommended_units,
+                        position_size=position_size
+                    )
+                    webhook_log.status = "SENT"
+                    webhook_log.sent_at = datetime.now()
+                    webhook_success = True
+                except Exception as e:
+                    webhook_log.status = "FAILED"
+                    webhook_log.error_message = str(e)
+                    print(f"[NOTIFICATION] Webhook发送失败: {e}")
+                notification_logs.append(webhook_log)
             
-            self.db.add(notification_log)
+            # 批量保存日志
+            for log in notification_logs:
+                self.db.add(log)
             self.db.commit()
             
-            return True
+            return email_success or webhook_success
             
         except Exception as e:
-            notification_log.status = "FAILED"
-            notification_log.error_message = str(e)
-            self.db.add(notification_log)
+            for log in notification_logs:
+                if log.status != "SENT":
+                    log.status = "FAILED"
+                    log.error_message = str(e)
+                    self.db.add(log)
             self.db.commit()
             return False
     
@@ -232,17 +269,19 @@ class NotificationService:
 <html>
 <head>
     <style>
+        {% raw %}
         body { font-family: Arial, sans-serif; background-color: #f5f5f5; }
         .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .card { background-color: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        .header { background-color: {{ bg_color }}; padding: 20px; border-radius: 8px 8px 0 0; text-align: center; }}
-        .signal { font-size: 32px; font-weight: bold; color: {{ signal_color }}; margin: 10px 0; }}
-        .price { font-size: 24px; color: #333; }}
-        .content { padding: 20px; }}
-        .metric { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }}
-        .label { color: #666; }}
-        .value { font-weight: bold; color: #333; }}
-        .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }}
+        .card { background-color: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .header { background-color: """ + bg_color + """; padding: 20px; border-radius: 8px 8px 0 0; text-align: center; }
+        .signal { font-size: 32px; font-weight: bold; color: """ + signal_color + """; margin: 10px 0; }
+        .price { font-size: 24px; color: #333; }
+        .content { padding: 20px; }
+        .metric { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
+        .label { color: #666; }
+        .value { font-weight: bold; color: #333; }
+        .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }
+        {% endraw %}
     </style>
 </head>
 <body>

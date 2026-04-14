@@ -37,13 +37,15 @@ class PortfolioRiskManager:
     风险控制层次:
     1. 单一市场限制 (4单位)
     2. 高关联市场限制 (6单位)
-    3. 弱关联市场限制 (10单位)
-    4. 单向总敞口限制 (12单位)
+    3. 中等关联市场限制 (8单位) - 新增
+    4. 弱关联市场限制 (10单位)
+    5. 单向总敞口限制 (12单位)
     """
     
     # 风险阈值常量
     SINGLE_MARKET_LIMIT = settings.SINGLE_MARKET_LIMIT          # 4
     HIGH_CORRELATION_LIMIT = settings.CLOSELY_CORRELATED_LIMIT  # 6
+    MEDIUM_CORRELATION_LIMIT = 8   # 中等关联市场限制 (新增)
     LOW_CORRELATION_LIMIT = settings.LOOSELY_CORRELATED_LIMIT  # 10
     SINGLE_DIRECTION_LIMIT = settings.SINGLE_DIRECTION_LIMIT   # 12
     
@@ -103,10 +105,19 @@ class PortfolioRiskManager:
         ).all()
     
     def _get_correlations(self, ticker: str) -> List[MarketCorrelation]:
-        """获取与目标资产的关联资产"""
+        """获取与目标资产的关联资产
+        
+        修复: 使用valid_until字段过滤过期相关性数据
+        """
+        from datetime import datetime
+        
         return self.db.query(MarketCorrelation).filter(
             (MarketCorrelation.ticker_a == ticker) |
             (MarketCorrelation.ticker_b == ticker)
+        ).filter(
+            # 只返回未过期的相关性数据
+            (MarketCorrelation.valid_until == None) |
+            (MarketCorrelation.valid_until >= datetime.now())
         ).all()
     
     def _check_single_market_limit(
@@ -142,22 +153,31 @@ class PortfolioRiskManager:
     ) -> RiskCheckResult:
         """检查关联市场限制
         
-        修正：需将目标ticker自身的持仓也计入关联市场的总敞口
+        修复: 区分三层关联限制
+        - 高关联 (>=0.7): 6单位
+        - 中等关联 (0.4~0.7): 8单位
+        - 弱关联 (<0.4): 10单位
+        
         符合PRD第4.3章"累加暴露阀值引擎"的要求
         """
         if not correlations:
             # 无相关性数据，使用弱关联限制
             limit = self.LOW_CORRELATION_LIMIT
+            correlation_type = "LOW"
         else:
             # 计算最高关联类型
             max_correlation = max(abs(c.correlation) for c in correlations)
             
             if max_correlation >= self.HIGH_CORRELATION_THRESHOLD:
                 limit = self.HIGH_CORRELATION_LIMIT
+                correlation_type = "HIGH"
             elif max_correlation >= self.MEDIUM_CORRELATION_THRESHOLD:
-                limit = self.LOW_CORRELATION_LIMIT
+                # 修复: 中等关联使用单独的8单位限制
+                limit = self.MEDIUM_CORRELATION_LIMIT
+                correlation_type = "MEDIUM"
             else:
                 limit = self.LOW_CORRELATION_LIMIT
+                correlation_type = "LOW"
         
         # 获取关联的ticker集合
         correlated_tickers = set()

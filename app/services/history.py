@@ -31,20 +31,13 @@ class HistoryService:
         signal_reason: Optional[str] = None,
         dollar_volatility: Optional[float] = None,
         dollar_per_point: float = 1.0,
+        risk_amount: Optional[float] = None,  # 修复: 添加risk_amount参数
         error_message: Optional[str] = None
     ) -> AnalysisRecord:
         """
         保存分析记录
         
-        Args:
-            ticker: 资产代码
-            signal: 交易信号
-            current_price: 当前价格
-            account_equity: 账户净资产
-            ... 其他可选参数
-            
-        Returns:
-            创建的分析记录
+        修复: risk_amount字段写入数据库
         """
         record = AnalysisRecord(
             ticker=ticker.upper(),
@@ -59,6 +52,7 @@ class HistoryService:
             signal_reason=signal_reason,
             dollar_volatility=dollar_volatility,
             dollar_per_point=dollar_per_point,
+            risk_amount=risk_amount,  # 修复: 保存risk_amount
             error_message=error_message,
             is_active=signal != SignalType.HOLD  # HOLD信号不标记为活跃
         )

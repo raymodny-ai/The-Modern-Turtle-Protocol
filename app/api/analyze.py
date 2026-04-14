@@ -21,6 +21,7 @@ from app.schemas.trading import (
 )
 from app.services.fetch_data import get_market_data, DataSourceError
 from app.services.strategy import analyze_turtle_strategy
+from app.services.risk_manager import PortfolioRiskManager
 from app.services.history import HistoryService
 from app.services.notification import NotificationService
 
@@ -62,6 +63,27 @@ async def analyze_ticker(
             dollar_per_point=request.dollar_per_point
         )
         
+        # 2.5 风险检查 - 修复: 将四重熔断接入主流程
+        # 只有BUY信号才需要检查风险限制
+        signal_type = analysis_result['signal']
+        proposed_direction = "LONG" if signal_type == "BUY" else ("SHORT" if signal_type == "SELL" else None)
+        risk_check_passed = True
+        risk_blocked_reason = None
+        
+        if proposed_direction:
+            risk_manager = PortfolioRiskManager(db)
+            risk_result = risk_manager.check_risk_limits(
+                ticker=request.ticker,
+                proposed_direction=proposed_direction
+            )
+            risk_check_passed = risk_result.passed
+            risk_blocked_reason = risk_result.blocked_reason
+            
+            # 如果风险检查未通过，调整信号状态
+            if not risk_check_passed:
+                analysis_result['signal'] = "HOLD"
+                analysis_result['signal_reason'] = f"风险限制阻止交易: {risk_blocked_reason}"
+        
         # 3. 保存分析记录
         history_service = HistoryService(db)
         record = history_service.save_analysis(
@@ -76,7 +98,8 @@ async def analyze_ticker(
             position_size=analysis_result['position'].get('position_size'),
             signal_reason=analysis_result['signal_reason'],
             dollar_volatility=analysis_result['volatility'].get('dollar_volatility'),
-            dollar_per_point=request.dollar_per_point
+            dollar_per_point=request.dollar_per_point,
+            risk_amount=analysis_result['position'].get('risk_amount')  # 修复: 传入risk_amount
         )
         
         # 4. 发送通知(BUY/SELL信号)

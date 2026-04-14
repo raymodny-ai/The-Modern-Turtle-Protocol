@@ -89,16 +89,29 @@ class MarketDataFetcher:
         period: str,
         interval: str
     ) -> pd.DataFrame:
-        """从Yahoo Finance获取数据"""
-        # yfinance是同步库，需要在线程中运行
-        loop = asyncio.get_event_loop()
+        """从Yahoo Finance获取数据
+        
+        修复: 改用get_running_loop()并在同步操作中添加超时控制
+        """
+        # 使用get_running_loop()替代已废弃的get_event_loop()
+        loop = asyncio.get_running_loop()
         
         def _fetch():
-            stock = yf.Ticker(ticker)
-            df = stock.history(period=period, interval=interval)
-            return df
+            try:
+                stock = yf.Ticker(ticker)
+                df = stock.history(period=period, interval=interval)
+                return df
+            except Exception as e:
+                raise DataSourceError(f"Yahoo Finance获取失败: {str(e)}")
         
-        data = await loop.run_in_executor(None, _fetch)
+        # 添加超时控制，避免高并发下线程池耗尽
+        try:
+            data = await asyncio.wait_for(
+                loop.run_in_executor(None, _fetch),
+                timeout=settings.DATA_REQUEST_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            raise DataSourceError(f"Yahoo Finance获取超时: {ticker}")
         
         if data.empty:
             raise DataSourceError(f"Yahoo Finance返回空数据: {ticker}")

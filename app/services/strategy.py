@@ -57,7 +57,9 @@ class TurtleStrategy:
         data['TR'] = self._calculate_true_range(data)
         
         # 2. 计算N值 (ATR - Average True Range)
-        data['N'] = data['TR'].ewm(alpha=1.0/self.atr_period, adjust=False).mean()
+        # 修复: 先用前20日SMA初始化，再切换到EWM平滑
+        # 符合经典海龟规则的冷启动方法
+        data['N'] = self._calculate_n_value(data)
         
         # 3. 计算20日最高价 (入场阻力位)
         data['High_20'] = data['High'].rolling(window=self.entry_period).max()
@@ -73,6 +75,31 @@ class TurtleStrategy:
         data['Volatility_Ratio'] = data['N'] / data['Close']
         
         return data
+    
+    def _calculate_n_value(self, data: pd.DataFrame) -> pd.Series:
+        """
+        计算N值 (ATR)
+        
+        修复: 经典海龟规则要求:
+        - 前20日使用SMA初始化(减少冷启动偏差)
+        - 第21日起使用EWM平滑
+        """
+        if len(data) < self.atr_period:
+            # 数据不足20日，直接使用EWM
+            return data['TR'].ewm(alpha=1.0/self.atr_period, adjust=False).mean()
+        
+        n_values = pd.Series(index=data.index, dtype=float)
+        
+        # 前20日: 使用SMA初始化
+        n_values.iloc[:self.atr_period] = data['TR'].iloc[:self.atr_period].mean()
+        
+        # 第21日起: 从第20日的位置开始，使用EWM继续平滑
+        # 使用从第atr_period位置开始的EWM，并将结果赋值给剩余位置
+        alpha = 1.0 / self.atr_period
+        ewm_values = data['TR'].ewm(alpha=alpha, adjust=False).mean()
+        n_values.iloc[self.atr_period:] = ewm_values.iloc[self.atr_period:]
+        
+        return n_values
     
     def _calculate_true_range(self, df: pd.DataFrame) -> pd.Series:
         """
@@ -124,16 +151,18 @@ class TurtleStrategy:
         
         # 信号判断逻辑
         # BUY: 价格向上突破20日最高价
-        if current_price > high_20:
+        # 修复: 使用 >= 使价格等于20日最高价时也能触发信号
+        if current_price >= high_20:
             signal = SignalType.BUY
             reason = f"价格(${current_price:.2f})向上突破20日最高价(${high_20:.2f})，触发入场信号"
-            price_action = f"突破入场: 当前价 > 20日高点"
-            
+            price_action = f"突破入场: 当前价 >= 20日高点"
+        
         # SELL: 价格向下突破10日最低价
-        elif current_price < low_10:
+        # 修复: 使用 <= 使价格等于10日最低价时也能触发信号
+        elif current_price <= low_10:
             signal = SignalType.SELL
             reason = f"价格(${current_price:.2f})向下突破10日最低价(${low_10:.2f})，触发出场信号"
-            price_action = f"突破出场: 当前价 < 10日低点"
+            price_action = f"突破出场: 当前价 <= 10日低点"
             
         # HOLD: 价格在通道内震荡
         else:
