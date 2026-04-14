@@ -212,8 +212,19 @@ class SimpleUserDatabase:
         return None
 
 
-# 全局用户数据库实例
-user_db = SimpleUserDatabase()
+# 全局用户数据库实例 - 懒加载避免bcrypt初始化问题
+_user_db = None
+
+def get_user_db() -> SimpleUserDatabase:
+    """懒加载获取用户数据库实例"""
+    global _user_db
+    if _user_db is None:
+        _user_db = SimpleUserDatabase()
+    return _user_db
+
+def user_db() -> SimpleUserDatabase:
+    """兼容属性访问方式"""
+    return get_user_db()
 
 
 class RBACChecker:
@@ -263,7 +274,8 @@ class RBACChecker:
     def require_permissions(cls, required_permissions: List[str]):
         """权限检查依赖"""
         def checker(token_data: TokenData = Depends(_get_current_token)):
-            user = user_db.users.get(token_data.user_id)
+            _user_db = get_user_db()
+            user = _user_db.users.get(token_data.user_id)
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -304,7 +316,8 @@ async def _get_current_token(
     # 从Header或Query获取API Key
     api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
     if api_key:
-        permissions = user_db.get_api_key_permissions(api_key)
+        _user_db = get_user_db()
+        permissions = _user_db.get_api_key_permissions(api_key)
         if not permissions:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -331,10 +344,11 @@ async def _get_current_token(
         )
     
     try:
-        token_data = user_db.verify_token(credentials.credentials, SECRET_KEY)
+        _user_db = get_user_db()
+        token_data = _user_db.verify_token(credentials.credentials, SECRET_KEY)
         
         # 速率限制检查
-        if not user_db.check_rate_limit(client_ip):
+        if not _user_db.check_rate_limit(client_ip):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="请求过于频繁，请稍后再试"
@@ -352,7 +366,8 @@ async def _get_current_token(
 
 async def get_current_user(token_data: TokenData = Depends(_get_current_token)) -> User:
     """获取当前登录用户"""
-    user = user_db.users.get(token_data.user_id)
+    _user_db = get_user_db()
+    user = _user_db.users.get(token_data.user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -460,4 +475,5 @@ audit_logger = SecurityAuditLogger()
 
 def create_test_token(user_id: int = 1) -> str:
     """创建测试Token（仅用于开发/测试）"""
-    return user_db.create_access_token(user_id, SECRET_KEY)
+    _user_db = get_user_db()
+    return _user_db.create_access_token(user_id, SECRET_KEY)

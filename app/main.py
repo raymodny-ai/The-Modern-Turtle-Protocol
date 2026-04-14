@@ -129,7 +129,7 @@ async def login(username: str, password: str):
     返回JWT访问令牌
     """
     # 简化验证（实际应查数据库）
-    from app.core.security import user_db
+    user_db = get_user_db()
     
     for user_id, user in user_db.users.items():
         if user.username == username:

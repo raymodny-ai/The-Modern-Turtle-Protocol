@@ -241,7 +241,8 @@ class TurtleStrategyAnalyzer:
         position_calc = self._calculate_position_size(
             account_equity=account_equity,
             n_value=n_value,
-            dollar_per_point=dollar_per_point
+            dollar_per_point=dollar_per_point,
+            current_price=details['current_price']
         )
         
         # 5. 获取通道水平
@@ -284,12 +285,20 @@ class TurtleStrategyAnalyzer:
         self,
         account_equity: float,
         n_value: float,
-        dollar_per_point: float = 1.0
+        dollar_per_point: float = 1.0,
+        current_price: float = None
     ) -> dict:
         """
         计算头寸规模
         
         公式: Units = (账户净资产 × 0.01) / (N值 × 每点美元价值)
+        
+        注意: recommended_units是风险单位，不是直接等于股数
+        实际股数 = recommended_units × (dollar_volatility / current_price)
+        这是因为1个风险单位的价值 = N值 × dollar_per_point
+        
+        修复Bug: 之前position_size被错误地等同于recommended_units
+        对于高价股(如NVDA)，这种等价会导致建议股数严重低估
         """
         if n_value <= 0:
             return {
@@ -307,14 +316,22 @@ class TurtleStrategyAnalyzer:
         # 计算美元波动率 (N值 × 每点美元价值)
         dollar_volatility = n_value * dollar_per_point
         
-        # 计算建议单位数
+        # 计算建议单位数(风险单位)
         recommended_units = risk_amount / dollar_volatility if dollar_volatility > 0 else 0
         
-        # 计算建议持仓股数
-        position_size = recommended_units  # 股票场景下，1单位=1股
+        # 计算实际持仓股数
+        # 修复: Unit是风险单位，不等于股数
+        # 1个风险单位 = dollar_volatility美元价值
+        # 实际股数 = recommended_units × (dollar_volatility / current_price)
+        if current_price and current_price > 0:
+            # 股票场景: 股数 = 风险单位 × (美元波动率 / 当前价格)
+            position_size = recommended_units * (dollar_volatility / current_price)
+        else:
+            # 如果没有当前价格，返回风险单位数
+            position_size = recommended_units
         
-        # 最大持仓市值
-        max_position_value = recommended_units * n_value * dollar_per_point
+        # 最大持仓市值 = recommended_units × dollar_volatility
+        max_position_value = recommended_units * dollar_volatility
         
         return {
             'recommended_units': round(recommended_units, 2),
@@ -323,7 +340,8 @@ class TurtleStrategyAnalyzer:
             'dollar_volatility': round(dollar_volatility, 2),
             'max_position_value': round(max_position_value, 2),
             'can_add_position': recommended_units > 0,
-            'dollar_per_point': dollar_per_point
+            'dollar_per_point': dollar_per_point,
+            'current_price': current_price
         }
     
     def _prepare_price_history(self, data: pd.DataFrame) -> List[dict]:
