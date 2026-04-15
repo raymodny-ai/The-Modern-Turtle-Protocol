@@ -31,14 +31,20 @@ class HistoryService:
         signal_reason: Optional[str] = None,
         dollar_volatility: Optional[float] = None,
         dollar_per_point: float = 1.0,
-        risk_amount: Optional[float] = None,  # 修复: 添加risk_amount参数
+        risk_amount: Optional[float] = None,
+        current_positions: int = 0,  # 修复: 添加current_positions参数
         error_message: Optional[str] = None
     ) -> AnalysisRecord:
         """
         保存分析记录
         
-        修复: risk_amount字段写入数据库
+        修复: risk_amount和current_positions字段写入数据库
+        is_active语义: 只有BUY信号标记为活跃(表示入场)
+        SELL表示退出/平仓，不应标记为活跃
         """
+        # 修复is_active语义: BUY=入场(活跃), SELL/HOLD=非活跃
+        is_active_record = signal == SignalType.BUY
+        
         record = AnalysisRecord(
             ticker=ticker.upper(),
             signal=DBSignalType(signal.value),
@@ -52,9 +58,10 @@ class HistoryService:
             signal_reason=signal_reason,
             dollar_volatility=dollar_volatility,
             dollar_per_point=dollar_per_point,
-            risk_amount=risk_amount,  # 修复: 保存risk_amount
+            risk_amount=risk_amount,
+            current_positions=current_positions,  # 修复: 保存真实持仓
             error_message=error_message,
-            is_active=signal != SignalType.HOLD  # HOLD信号不标记为活跃
+            is_active=is_active_record
         )
         
         self.db.add(record)

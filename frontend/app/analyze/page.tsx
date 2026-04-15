@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { StockChart } from '@/app/components/StockChart'
 import { SignalBadge } from '@/app/components/SignalBadge'
 import { MetricsCard } from '@/app/components/MetricsCard'
+import { PositionSection } from '@/app/components/PositionSection'
 import axios from 'axios'
 
 interface AnalysisResult {
@@ -201,34 +202,11 @@ export default function AnalyzePage() {
               />
             </div>
 
-            {/* 头寸建议 */}
-            <div className="border-t pt-6">
-              <h3 className="text-lg font-semibold mb-4 text-gray-800">💰 头寸建议</h3>
-              <div className="grid md:grid-cols-4 gap-4">
-                <MetricsCard
-                  label="建议单位"
-                  value={result.recommendation.recommended_units.toFixed(2)}
-                  subtext="基于1%风险"
-                  highlight
-                />
-                <MetricsCard
-                  label="建议股数"
-                  value={result.recommendation.position_size.toFixed(0)}
-                  subtext="可买入股数"
-                  highlight
-                />
-                <MetricsCard
-                  label="风险金额"
-                  value={`$${result.risk_metrics.risk_amount.toFixed(2)}`}
-                  subtext={`占总资金${result.risk_metrics.risk_percentage}%`}
-                />
-                <MetricsCard
-                  label="最大持仓"
-                  value={`$${result.risk_metrics.max_position_value.toFixed(2)}`}
-                  subtext="按当前波动率"
-                />
-              </div>
-            </div>
+            {/* 头寸建议 - 新增真实持仓窗口 */}
+            <PositionSection 
+              positionData={null}
+              recommendation={result.recommendation}
+            />
           </div>
 
           {/* 价格图表 */}

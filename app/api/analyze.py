@@ -24,8 +24,42 @@ from app.services.strategy import analyze_turtle_strategy
 from app.services.risk_manager import PortfolioRiskManager
 from app.services.history import HistoryService
 from app.services.notification import NotificationService
+from app.database.models import PositionSnapshot
 
 router = APIRouter(prefix="/analyze", tags=["分析"])
+
+
+def _get_current_position(db: Session, ticker: str) -> dict:
+    """
+    从持仓表获取当前真实持仓
+    
+    修复: 真实持仓状态接入分析接口
+    """
+    position = db.query(PositionSnapshot).filter(
+        PositionSnapshot.ticker == ticker.upper(),
+        PositionSnapshot.is_closed == False
+    ).first()
+    
+    if position:
+        return {
+            'has_position': True,
+            'units': position.units,
+            'shares': position.shares,
+            'avg_entry_price': position.avg_entry_price,
+            'position_type': position.position_type,
+            'is_closed': position.is_closed,
+            'opened_at': position.opened_at
+        }
+    else:
+        return {
+            'has_position': False,
+            'units': 0,
+            'shares': 0,
+            'avg_entry_price': None,
+            'position_type': None,
+            'is_closed': True,
+            'opened_at': None
+        }
 
 
 @router.post("", response_model=AnalyzeResponse)
@@ -84,7 +118,12 @@ async def analyze_ticker(
                 analysis_result['signal'] = "HOLD"
                 analysis_result['signal_reason'] = f"风险限制阻止交易: {risk_blocked_reason}"
         
+        # 2.6 获取真实持仓状态 - 修复: 从持仓表获取
+        current_position_data = _get_current_position(db, request.ticker)
+        analysis_result['current_position_data'] = current_position_data
+        
         # 3. 保存分析记录
+        current_pos = analysis_result.get('current_position_data', {})
         history_service = HistoryService(db)
         record = history_service.save_analysis(
             ticker=request.ticker,
@@ -99,7 +138,8 @@ async def analyze_ticker(
             signal_reason=analysis_result['signal_reason'],
             dollar_volatility=analysis_result['volatility'].get('dollar_volatility'),
             dollar_per_point=request.dollar_per_point,
-            risk_amount=analysis_result['position'].get('risk_amount')  # 修复: 传入risk_amount
+            risk_amount=analysis_result['position'].get('risk_amount'),
+            current_positions=current_pos.get('units', 0)  # 修复: 写入真实持仓单位数
         )
         
         # 4. 发送通知(BUY/SELL信号)
@@ -155,7 +195,7 @@ async def analyze_ticker(
             recommendation=PositionRecommendation(
                 recommended_units=position.get('recommended_units', 0),
                 position_size=position.get('position_size', 0),
-                current_positions=0,  # TODO: 从持仓表获取
+                current_positions=current_pos.get('units', 0),  # 修复: 使用真实持仓
                 can_add_position=position.get('can_add_position', False)
             ),
             risk_metrics=RiskMetrics(
